@@ -35,15 +35,15 @@ def run_sync_example():
     original_prompt = "You are a copywriter."
     
     # Generate text without feedback
-    print("\nGenerating text WITHOUT feedback...")
+    print("\n######################Generating text WITHOUT feedback...")
     original = generate_text(original_prompt, task)
     
-    print("\nOriginal output:")
+    print("\n######################Original output:")
     print(original)
     
     # Save feedback for the task
     feedback = "Keep it under 100 words and focus on benefits not features"
-    print(f"\nSaving feedback: '{feedback}'")
+    print(f"\n######################Saving feedback: '{feedback}'")
     learner.save_feedback(task, feedback)
     
     # Apply feedback to the prompt
@@ -71,15 +71,15 @@ async def run_async_example():
     original_prompt = "You are a marketing specialist."
     
     # Generate text without feedback
-    print("\nGenerating text WITHOUT feedback...")
+    print("\n######################Generating text WITHOUT feedback...")
     original = await generate_text_async(original_prompt, task)
     
-    print("\nOriginal output:")
+    print("\n######################Original output:")
     print(original)
     
     # Save feedback for the task asynchronously
     feedback = "Be conversational and include a clear call-to-action. Keep it short."
-    print(f"\nSaving feedback: '{feedback}'")
+    print(f"\n######################Saving feedback: '{feedback}'")
     await learner.save_feedback_async(task, feedback)
     
     # Apply feedback to the prompt asynchronously
@@ -87,7 +87,7 @@ async def run_async_example():
     enhanced_prompt = await learner.apply_feedback_async(task, original_prompt)
     enhanced = await generate_text_async(enhanced_prompt, task)
     
-    print("\nImproved output:")
+    print("\n######################Improved output:")
     print(enhanced)
     
     print("\nDone! Asynchronous example completed.")
