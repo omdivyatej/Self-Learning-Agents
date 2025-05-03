@@ -3,13 +3,7 @@ import sys
 import asyncio
 from openai import OpenAI
 from openai import AsyncOpenAI
-
-try:
-    from dead_simple_self_learning import SelfLearner
-except ImportError:
-    # Fallback for running the example without installing the package
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from dead_simple_self_learning import SelfLearner
+from dead_simple_self_learning import SelfLearner
 
 client = OpenAI()
 async_client = AsyncOpenAI()

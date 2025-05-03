@@ -13,13 +13,18 @@ with open(os.path.join(os.path.abspath(os.path.dirname(__file__)), "README.md"),
 
 # Define required dependencies
 REQUIRED_PACKAGES = [
-    'numpy>=1.20.0',
-    'sentence-transformers>=2.2.0',
+    "numpy>=1.20.0",
+    "openai>=1.0.0",
+    "transformers>=4.20.0",
+    "torch>=1.12.0",
+    "sentence-transformers>=2.2.0"
 ]
 
 # Define optional dependencies
 EXTRA_REQUIRES = {
     'openai': ['openai>=1.0.0'],
+    'agno': ['agno>=0.1.0'],
+    'langchain': ['langchain>=0.2.0'],
     'dev': [
         'pytest>=7.0.0',
         'black>=22.0.0',
@@ -38,16 +43,16 @@ setup(
     packages=find_packages(exclude=["tests", "examples"]),
     install_requires=REQUIRED_PACKAGES,
     extras_require=EXTRA_REQUIRES,
-    author="AI Assistant",
-    author_email="example@example.com",
+    author="Om Divyatej",
+    author_email="ohmbrock42@gmail.com",
     description="A lightweight library for LLM self-improvement through feedback",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/dead_simple_self_learning",
+    url="https://github.com/omdivyatej/dead_simple_self_learning",
     project_urls={
-        "Bug Reports": "https://github.com/yourusername/dead_simple_self_learning/issues",
-        "Source": "https://github.com/yourusername/dead_simple_self_learning",
-        "Documentation": "https://github.com/yourusername/dead_simple_self_learning#readme",
+        "Bug Reports": "https://github.com/omdivyatej/dead_simple_self_learning/issues",
+        "Source": "https://github.com/omdivyatej/dead_simple_self_learning",
+        "Documentation": "https://github.com/omdivyatej/dead_simple_self_learning#readme",
     },
     classifiers=[
         "Programming Language :: Python :: 3",
@@ -62,7 +67,7 @@ setup(
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
         "Development Status :: 4 - Beta",
     ],
-    keywords="llm, embedding, self-learning, feedback, prompt-engineering, nlp",
+    keywords="llm, embedding, self-learning,agents,RAG, feedback, prompt-engineering, nlp",
     python_requires=">=3.7",
     include_package_data=True,
     zip_safe=False,

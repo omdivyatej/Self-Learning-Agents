@@ -1,13 +1,7 @@
 import os
 import sys
+from dead_simple_self_learning import SelfLearner
 
-# Make sure you've installed the package: pip install -e .
-try:
-    from dead_simple_self_learning import SelfLearner
-except ImportError:
-    # Fallback for running the example without installing the package
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from dead_simple_self_learning import SelfLearner
 
 # Initialize the self-learner
 memory_path = "feedback_operations_memory.json"

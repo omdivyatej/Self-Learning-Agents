@@ -4,7 +4,9 @@ A lightweight Python library that allows any LLM agent to self-improve through f
 
 ## 📋 Overview
 
-This library provides a simple system for capturing, storing, and reusing feedback for LLM tasks. It works by:
+**Problem**: LLM agents struggle to consistently learn from user feedback without requiring costly model retraining or complex infrastructure.
+
+**Solution**: This library provides a simple system for capturing, storing, and reusing feedback for LLM tasks. It works by:
 
 1. Collecting feedback on LLM outputs
 2. Storing this feedback with embeddings of the original task
@@ -19,40 +21,52 @@ All of this happens without any model retraining - just by enhancing prompts wit
 - **Multiple Embedding Models**: Support for OpenAI and HuggingFace models (MiniLM, BGE-small)
 - **Local-First**: Uses JSON files for storage with no external DB requirements
 - **Smart Feedback Selection**: Uses OpenAI to choose the most relevant feedback for a task
+- **Async Support**: Both synchronous and asynchronous APIs for better performance
 - **Customizable**: Configurable thresholds, formatters, and memory handling
 - **Zero Infrastructure**: Works out of the box with minimal setup
+- **Framework Agnostic**: Works with any LLM provider (OpenAI, Anthropic, etc.)
+- **Integration Examples**: Ready-to-use examples with LangChain, Agno, and more
 
 ## 🔧 Installation
 
-Once published, you'll be able to install the package via pip:
+You can install the package via pip:
 
 ```bash
 pip install dead_simple_self_learning
 ```
 
-Until then, you can install from source:
+### Dependencies
 
+- **Required**: 
+  - Python 3.7+
+  - numpy >=1.20.0
+  - sentence-transformers >=2.2.0
+
+- **Optional**:
+  - openai >=1.0.0 (for OpenAI embeddings and LLM feedback selection)
+  - langchain, agno (for specific integration examples)
+
+Install with optional OpenAI dependency:
 ```bash
-git clone https://github.com/yourusername/dead_simple_self_learning.git
-cd dead_simple_self_learning
-pip install -e .
+pip install "dead_simple_self_learning[openai]"
+```
+
+Install for development:
+```bash
+pip install "dead_simple_self_learning[dev]"
 ```
 
 ## 🚀 Quick Start
 
 ```python
-import os
 from openai import OpenAI
 from dead_simple_self_learning import SelfLearner
 
-# Set your OpenAI API key (if using OpenAI)
-os.environ["OPENAI_API_KEY"] = "your-api-key"
+# Initialize OpenAI client (you need your own API key)
+client = OpenAI(api_key="YOUR_OPENAI_API_KEY")
 
-# Initialize OpenAI client
-client = OpenAI()
-
-# Initialize a self-learner
-learner = SelfLearner(embedding_model="miniLM")  # No API key needed for miniLM
+# Initialize a self-learner (no API key needed for miniLM)
+learner = SelfLearner(embedding_model="miniLM")
 
 # Define our task and original prompt
 task = "Write a product description for a smartphone"
@@ -78,6 +92,17 @@ enhanced_prompt = learner.apply_feedback(task, base_prompt)
 enhanced = generate_text(enhanced_prompt, task)
 
 print("Improved output:", enhanced)
+```
+
+## 📊 Package Structure
+
+```
+dead_simple_self_learning/
+├── __init__.py         # Package exports
+├── __main__.py         # CLI entrypoint
+├── embedder.py         # Handles embedding generation
+├── memory.py           # Manages storage and retrieval
+└── learner.py          # Core functionality
 ```
 
 ## 📖 Detailed Guide
@@ -148,6 +173,10 @@ learner = SelfLearner(
 enhanced_prompt = learner.apply_feedback("Task description", "Base prompt")
 learner.save_feedback("Task description", "The feedback to save")
 
+# Async variants (for better performance in async contexts)
+enhanced_prompt = await learner.apply_feedback_async("Task", "Prompt")
+await learner.save_feedback_async("Task", "Feedback")
+
 # Configuration
 learner.set_similarity_threshold(0.75)
 learner.set_max_matches(3)
@@ -174,18 +203,47 @@ learner.reset_memory()
 
 #### LLM Feedback Selection
 
-- `"openai"`: Uses GPT-4o to select the best feedback (requires API key)
+- `"openai"`: Uses GPT models to select the best feedback (requires API key)
 
 ## 🔄 How It Works
 
 1. **Task Embedding**: When a new task comes in, it's embedded using the chosen model
 2. **Similarity Search**: The system searches for similar tasks in memory
 3. **Feedback Retrieval**: If similar tasks are found, their feedback is retrieved
-4. **Selection Process**: If multiple similar tasks are found, OpenAI's GPT-4o is used to select the best feedback
+4. **Selection Process**: If multiple similar tasks are found, the best feedback is selected
 5. **Prompt Enhancement**: The selected feedback is injected into the base prompt
 6. **Usage Tracking**: The system tracks which feedback is most useful
 
 ## 📚 Advanced Usage
+
+### Asynchronous API
+
+For I/O-bound applications, use the async methods for better performance:
+
+```python
+import asyncio
+from dead_simple_self_learning import SelfLearner
+
+async def enhance_prompts():
+    learner = SelfLearner(embedding_model="miniLM")
+    
+    # Save feedback asynchronously
+    await learner.save_feedback_async(
+        "Write a product description", 
+        "Focus on unique features"
+    )
+    
+    # Apply feedback asynchronously
+    enhanced = await learner.apply_feedback_async(
+        "Write a product description for headphones",
+        "You are a copywriter."
+    )
+    
+    return enhanced
+
+# Run the async function
+enhanced_prompt = asyncio.run(enhance_prompts())
+```
 
 ### Feedback Operations
 
@@ -232,45 +290,81 @@ learner = SelfLearner(
 )
 ```
 
-## 💻 Requirements
-
-- Python 3.7+
-- numpy >=1.20.0
-- sentence-transformers >=2.2.0 (for local embedding models)
-- openai >=1.0.0 (optional, for OpenAI embeddings and LLM)
-
-## 📦 Publishing Your Package
-
-This repository includes a `setup.py` file, which is the configuration file for publishing your package to PyPI (Python Package Index). Here's how to use it:
-
-1. **Update package information**: Review and update the metadata in setup.py if needed
-2. **Build the package**:
-   ```bash
-   pip install build
-   python -m build
-   ```
-3. **Test locally**:
-   ```bash
-   pip install dist/dead_simple_self_learning-0.1.0-py3-none-any.whl
-   ```
-4. **Publish to PyPI**:
-   ```bash
-   pip install twine
-   twine upload dist/*
-   ```
-
-You'll need a PyPI account, and you'll be prompted for your username and password during upload.
-
 ## 🔍 Examples
 
 Check out the `examples/` directory for more detailed examples:
 
 - `demo_sample_example.py`: Quick start example showing the basic workflow
 - `feedback_operations_example.py`: Demonstrates various feedback operations
+- `lanchain_sql_agent_example.py`: Integration with LangChain SQL agent
+- `agno_sample_demo.py`: Integration with Agno framework
+
+To run examples:
+
+```bash
+# Install the package first (from PyPI or in development mode)
+pip install -e .
+
+# Run an example
+python examples/demo_sample_example.py
+```
+
+> **⚠️ Important:** The examples contain placeholders for API keys. Replace `YOUR_API_KEY_HERE` with your actual API key before running examples that require OpenAI or other API access.
+
+## ⚠️ Security Warning
+
+- Never hardcode API keys in your code
+- Use environment variables or secure vaults to store sensitive credentials
+- The examples in this repository use placeholder API keys
+- Set your API key using:
+  ```python
+  import os
+  os.environ["OPENAI_API_KEY"] = "your-key-here"  # Not recommended for production
+  ```
+
+## 🔍 Troubleshooting
+
+### Common Issues
+
+1. **Missing dependencies**: If using OpenAI features, install the OpenAI package
+   ```bash
+   pip install "dead_simple_self_learning[openai]"
+   ```
+
+2. **Embedding model loading errors**: Ensure you have enough disk space and RAM for the embedding models
+
+3. **Performance issues**: For high-throughput applications, use the async API
 
 ## 🤝 Contributing
 
-Contributions are welcome! Feel free to submit issues or pull requests to improve the library.
+Contributions are welcome! Here's how to contribute:
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature-name`
+3. Make your changes
+4. Add tests if applicable
+5. Run tests: `pytest`
+6. Submit a pull request
+
+## 📦 Publishing
+
+This repository includes a `setup.py` file for PyPI publishing:
+
+1. Update version in `dead_simple_self_learning/__init__.py`
+2. Build the package:
+   ```bash
+   pip install build
+   python -m build
+   ```
+3. Test locally:
+   ```bash
+   pip install dist/dead_simple_self_learning-0.1.0-py3-none-any.whl
+   ```
+4. Publish to PyPI:
+   ```bash
+   pip install twine
+   twine upload dist/*
+   ```
 
 ## 📜 License
 
