@@ -5,8 +5,6 @@ A lightweight Python library that allows any LLM agent to self-improve through f
 <p align="center">
   <img src="https://cdn.iconscout.com/icon/premium/png-256-thumb/multi-agent-2134465-1802462.png?f=webp&w=256" width="200" alt="Dead Simple Self-Learning Logo">
 </p>
-![image](https://github.com/user-attachments/assets/e00cebbb-c7c6-4cd2-8f34-ccc9671f3739)
-
 
 ## 📋 Overview
 
