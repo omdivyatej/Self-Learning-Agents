@@ -45,7 +45,7 @@ setup(
     extras_require=EXTRA_REQUIRES,
     author="Om Divyatej",
     author_email="ohmbrock42@gmail.com",
-    description="A lightweight library for LLM self-improvement through feedback",
+    description="A lightweight Python library that allows any LLM agent to self-improve through feedback, without retraining models.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/omdivyatej/dead_simple_self_learning",
