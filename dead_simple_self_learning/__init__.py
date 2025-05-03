@@ -29,4 +29,4 @@ from .embedder import Embedder
 from .memory import Memory
 from .learner import SelfLearner
 
-__version__ = "1.1.2" 
+__version__ = "1.1.3" 
