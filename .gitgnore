@@ -1,2 +1,5 @@
 __pycache__
 .gitignore
+dead_simple_self_learning.egg-info/
+dist/
+
