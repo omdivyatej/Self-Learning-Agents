@@ -27,6 +27,7 @@ class SelfLearner:
         memory_path: str = "memory.json",
         similarity_threshold: float = 0.85,
         max_matches: int = 2,
+        num_select_feedback: int = 1,
         llm_feedback_selection_layer: str = "openai",
         feedback_formatter: Optional[Callable[[str, str], str]] = None,
         temporary_memory: bool = False,
@@ -48,6 +49,9 @@ class SelfLearner:
                                          Defaults to 0.85.
             max_matches (int): Maximum number of similar tasks to retrieve.
                               Defaults to 2.
+            num_select_feedback (int): Number of feedback items to select.
+                                     If set to max_matches, all feedback will be selected.
+                                     Defaults to 1 (best feedback only).
             llm_feedback_selection_layer (str): Provider for LLM feedback selection.
                                Options: "openai"
                                Defaults to "openai".
@@ -75,11 +79,17 @@ class SelfLearner:
             raise ValueError(f"Similarity threshold must be between 0 and 1, got {similarity_threshold}")
         if max_matches < 1:
             raise ValueError(f"max_matches must be at least 1, got {max_matches}")
+        if num_select_feedback < 1:
+            raise ValueError(f"num_select_feedback must be at least 1, got {num_select_feedback}")
+        if num_select_feedback > max_matches:
+            logger.warning(f"num_select_feedback ({num_select_feedback}) is greater than max_matches ({max_matches}). Setting num_select_feedback to {max_matches}.")
+            num_select_feedback = max_matches
             
         self.embedder = Embedder(model_name=embedding_model)
         self.memory = Memory(file_path=memory_path, temporary=temporary_memory)
         self.similarity_threshold = similarity_threshold
         self.max_matches = max_matches
+        self.num_select_feedback = num_select_feedback
         self.llm_provider = llm_feedback_selection_layer.lower()  # Keep for backwards compatibility
         self.llm_feedback_selection_layer = llm_feedback_selection_layer.lower()
         self.feedback_formatter = feedback_formatter
@@ -169,23 +179,45 @@ class SelfLearner:
                 # If multiple similar tasks found, use LLM to select the best feedback asynchronously
                 selected_feedback = await self._select_best_feedback_async(task, similar_tasks)
                 
-                # Find which task provided the selected feedback
-                selected_task = None
-                selected_index = None
-                for similar_task in similar_tasks:
-                    if similar_task["feedback"] == selected_feedback:
-                        selected_task = similar_task["task"]
-                        selected_index = similar_task["index"]
-                        # Update usage count
-                        self.memory.increment_usage([selected_index])
-                        break
+                # Handle different types of selected_feedback
+                if isinstance(selected_feedback, list):
+                    # Find which tasks provided the selected feedback
+                    selected_indices = []
+                    for feedback_item in selected_feedback:
+                        if feedback_item == "NONE":
+                            continue
+                        for similar_task in similar_tasks:
+                            if similar_task["feedback"] == feedback_item:
+                                selected_indices.append(similar_task["index"])
+                                break
+                    
+                    # Update usage count
+                    if selected_indices:
+                        self.memory.increment_usage(selected_indices)
                         
-                if self.show_feedback_selection and selected_task:
-                    logger.info(f"Selected feedback: '{selected_feedback}'")
-                    logger.info(f"From task: '{selected_task}'")
+                    if self.show_feedback_selection:
+                        logger.info(f"Selected {len(selected_feedback)} feedback items")
+                        for item in selected_feedback:
+                            logger.info(f"- '{item}'")
+                else:
+                    # Legacy single feedback selection (for backward compatibility)
+                    # Find which task provided the selected feedback
+                    selected_task = None
+                    selected_index = None
+                    for similar_task in similar_tasks:
+                        if similar_task["feedback"] == selected_feedback:
+                            selected_task = similar_task["task"]
+                            selected_index = similar_task["index"]
+                            # Update usage count
+                            self.memory.increment_usage([selected_index])
+                            break
+                            
+                    if self.show_feedback_selection and selected_task:
+                        logger.info(f"Selected feedback: '{selected_feedback}'")
+                        logger.info(f"From task: '{selected_task}'")
             
             # If no suitable feedback was selected, return the base prompt
-            if selected_feedback == "NONE":
+            if selected_feedback == "NONE" or (isinstance(selected_feedback, list) and selected_feedback[0] == "NONE"):
                 if self.show_feedback_selection:
                     logger.info("No suitable feedback was selected. Using original prompt.")
                 return base_prompt
@@ -213,7 +245,7 @@ class SelfLearner:
         logger.warning("enhance_prompt_async is deprecated, use apply_feedback_async instead")
         return await self.apply_feedback_async(task, base_prompt)
         
-    async def _select_best_feedback_async(self, task: str, similar_tasks: List[Dict[str, Any]]) -> str:
+    async def _select_best_feedback_async(self, task: str, similar_tasks: List[Dict[str, Any]]) -> Union[str, List[str]]:
         """
         Asynchronously select the best feedback from similar tasks.
         
@@ -225,12 +257,18 @@ class SelfLearner:
             similar_tasks (List[Dict[str, Any]]): List of similar tasks with feedback.
 
         Returns:
-            str: The selected feedback or "NONE" if none is suitable.
+            Union[str, List[str]]: The selected feedback(s) or "NONE" if none is suitable.
+                                 Returns a string if num_select_feedback=1, otherwise a list.
         """
-        # If no async LLM client available, use the most similar task's feedback
+        # If selecting all available feedback
+        if self.num_select_feedback >= len(similar_tasks):
+            logger.debug(f"Selecting all {len(similar_tasks)} available feedback items")
+            return [task["feedback"] for task in similar_tasks]
+        
+        # If no async LLM client available, use the most similar tasks' feedback
         if not self.async_llm_client:
-            logger.debug("No async LLM client available, using most similar task's feedback")
-            return similar_tasks[0]["feedback"]
+            logger.debug("No async LLM client available, using most similar tasks' feedback")
+            return [task["feedback"] for task in similar_tasks[:self.num_select_feedback]]
         
         # Construct prompt for the LLM
         prompt = self._construct_feedback_selection_prompt(task, similar_tasks)
@@ -248,36 +286,231 @@ class SelfLearner:
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.3,
-                    max_tokens=200
+                    max_tokens=400
                 )
-                selected_feedback = response.choices[0].message.content.strip()
+                selected_feedback_text = response.choices[0].message.content.strip()
                 
                 if self.show_feedback_selection:
-                    logger.debug(f"Async LLM response: '{selected_feedback}'")
+                    logger.debug(f"Async LLM response: '{selected_feedback_text}'")
+                
+                # Parse selected feedback(s)
+                return self._parse_selected_feedback(selected_feedback_text, similar_tasks)
             else:
-                logger.warning(f"Unknown LLM provider: {self.llm_feedback_selection_layer}, using most similar task's feedback")
-                selected_feedback = similar_tasks[0]["feedback"]
+                logger.warning(f"Unknown LLM provider: {self.llm_feedback_selection_layer}, using most similar tasks' feedback")
+                return [task["feedback"] for task in similar_tasks[:self.num_select_feedback]]
                 
-            # Validate the response
-            # If the response exactly matches one of the feedbacks, use it
-            for task in similar_tasks:
-                if selected_feedback == task["feedback"]:
-                    return selected_feedback
-                
-            # If the response is "NONE", return that
-            if selected_feedback == "NONE":
-                return "NONE"
-                
-            # Otherwise, default to the most similar task's feedback
-            if self.show_feedback_selection:
-                logger.warning("Async LLM response didn't match any feedback exactly. Using most similar task's feedback.")
-            return similar_tasks[0]["feedback"]
-            
         except Exception as e:
             logger.error(f"Error selecting feedback with async LLM: {str(e)}", exc_info=True)
             logger.warning("Falling back to most similar task's feedback.")
             # Fall back to the most similar task's feedback
+            return [task["feedback"] for task in similar_tasks[:self.num_select_feedback]]
+
+    def _select_best_feedback(self, task: str, similar_tasks: List[Dict[str, Any]]) -> Union[str, List[str]]:
+        """
+        Select the best feedback from similar tasks.
+        
+        If an LLM client is available, use it to choose.
+        Otherwise, use the most similar task's feedback.
+
+        Args:
+            task (str): The current task.
+            similar_tasks (List[Dict[str, Any]]): List of similar tasks with feedback.
+
+        Returns:
+            Union[str, List[str]]: The selected feedback(s) or "NONE" if none is suitable.
+                                 Returns a string if num_select_feedback=1, otherwise a list.
+        """
+        # If selecting all available feedback
+        if self.num_select_feedback >= len(similar_tasks):
+            logger.debug(f"Selecting all {len(similar_tasks)} available feedback items")
+            return [task["feedback"] for task in similar_tasks]
+        
+        # If no LLM client available, use the most similar tasks' feedback
+        if not self.llm_client:
+            logger.debug("No LLM client available, using most similar tasks' feedback")
+            return [task["feedback"] for task in similar_tasks[:self.num_select_feedback]]
+        
+        # Construct prompt for the LLM
+        prompt = self._construct_feedback_selection_prompt(task, similar_tasks)
+        
+        if self.show_feedback_selection:
+            logger.debug("Feedback selection prompt:")
+            logger.debug(f"'{prompt}'")
+        
+        try:
+            if self.llm_feedback_selection_layer == "openai":
+                response = self.llm_client.chat.completions.create(
+                    model="gpt-4o",  # or gpt-3.5-turbo as a fallback
+                    messages=[
+                        {"role": "system", "content": "You are helping improve a self-learning agent."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=400
+                )
+                selected_feedback_text = response.choices[0].message.content.strip()
+                
+                if self.show_feedback_selection:
+                    logger.debug(f"LLM response: '{selected_feedback_text}'")
+                
+                # Parse selected feedback(s)
+                return self._parse_selected_feedback(selected_feedback_text, similar_tasks)
+            else:
+                logger.warning(f"Unknown LLM provider: {self.llm_feedback_selection_layer}, using most similar tasks' feedback")
+                return [task["feedback"] for task in similar_tasks[:self.num_select_feedback]]
+                
+        except Exception as e:
+            logger.error(f"Error selecting feedback with LLM: {str(e)}", exc_info=True)
+            logger.warning("Falling back to most similar task's feedback.")
+            # Fall back to the most similar task's feedback
+            return [task["feedback"] for task in similar_tasks[:self.num_select_feedback]]
+
+    def _parse_selected_feedback(self, response: str, similar_tasks: List[Dict[str, Any]]) -> Union[str, List[str]]:
+        """
+        Parse the LLM's response to extract selected feedback.
+        
+        Args:
+            response (str): The LLM's response text.
+            similar_tasks (List[Dict[str, Any]]): The list of similar tasks.
+            
+        Returns:
+            Union[str, List[str]]: The selected feedback(s) or the most similar task's feedback.
+        """
+        # If only selecting one feedback item (backward compatibility)
+        if self.num_select_feedback == 1:
+            # Check for exact matches
+            for task in similar_tasks:
+                if response == task["feedback"]:
+                    return response
+                
+            # If response is "NONE"
+            if response == "NONE":
+                return "NONE"
+                
+            # Otherwise default to most similar
+            logger.warning("LLM response didn't match any feedback exactly. Using most similar task's feedback.")
             return similar_tasks[0]["feedback"]
+        
+        # For multiple feedback selection
+        selected_feedbacks = []
+        
+        # Check for "NONE" response
+        if response == "NONE":
+            return ["NONE"]
+            
+        # Try to extract Feedback X: patterns
+        lines = response.split('\n')
+        for line in lines:
+            line = line.strip()
+            # Check for each feedback in the response
+            for task in similar_tasks:
+                if task["feedback"] in line:
+                    if task["feedback"] not in selected_feedbacks:
+                        selected_feedbacks.append(task["feedback"])
+        
+        # If no feedback was extracted from the response
+        if not selected_feedbacks:
+            logger.warning("Couldn't extract feedback from LLM response. Using top similar tasks' feedback.")
+            selected_feedbacks = [task["feedback"] for task in similar_tasks[:self.num_select_feedback]]
+            
+        return selected_feedbacks
+
+    def _construct_feedback_selection_prompt(self, task: str, similar_tasks: List[Dict[str, Any]]) -> str:
+        """
+        Construct a prompt for the LLM to select the best feedback.
+
+        Args:
+            task (str): The current task.
+            similar_tasks (List[Dict[str, Any]]): List of similar tasks with feedback.
+
+        Returns:
+            str: The prompt for the LLM.
+        """
+        prompt = f"""You are helping improve a self-learning agent.
+
+Here is a new incoming task: {task}
+
+Here are previous feedbacks from similar tasks:
+"""
+
+        for i, similar_task in enumerate(similar_tasks):
+            prompt += f"- Feedback {i+1}: {similar_task['feedback']}\n"
+
+        # Adjust prompt based on num_select_feedback
+        if self.num_select_feedback == 1:
+            prompt += """
+Choose the **most appropriate feedback** to apply to the new task.
+Return the selected feedback text EXACTLY as it appears above.
+If none are useful, return "NONE".
+
+Selected feedback:"""
+        else:
+            prompt += f"""
+Choose the **{self.num_select_feedback} most appropriate feedback items** to apply to the new task.
+For each selected feedback, return the feedback text EXACTLY as it appears above, prefixed with "Feedback X: "
+If none are useful, return "NONE".
+
+Selected feedback items:"""
+
+        return prompt
+
+    def _inject_feedback(self, base_prompt: str, feedback: Union[str, List[str]]) -> str:
+        """
+        Inject feedback into the base prompt.
+        
+        Uses custom formatter if provided, otherwise uses default format.
+
+        Args:
+            base_prompt (str): The base prompt.
+            feedback (Union[str, List[str]]): The feedback to inject. Can be a string or list of strings.
+
+        Returns:
+            str: The enhanced prompt with feedback injected.
+        """
+        # Handle case where feedback is a list
+        if isinstance(feedback, list):
+            if len(feedback) == 1:
+                # If only one feedback item, treat as string
+                return self._inject_feedback(base_prompt, feedback[0])
+            
+            # Combine multiple feedback items
+            combined_feedback = "\n".join([f"- {f}" for f in feedback])
+            
+            if self.feedback_formatter:
+                return self.feedback_formatter(base_prompt, combined_feedback)
+            
+            # Default formatting for multiple feedback items
+            return f"{base_prompt}\n\nAdditional instructions:\n{combined_feedback}"
+        
+        # Handle string feedback (original behavior)
+        if self.feedback_formatter:
+            return self.feedback_formatter(base_prompt, feedback)
+        
+        # Default formatting: append to the end of the base prompt
+        return f"{base_prompt}\n\nAdditional instructions: {feedback}"
+
+    def save_feedback(self, task: str, feedback: str) -> None:
+        """
+        Save feedback for a task.
+
+        Args:
+            task (str): The task description.
+            feedback (str): The feedback for the task.
+        """
+        if not task or not feedback:
+            logger.error("Task and feedback cannot be empty")
+            raise ValueError("Task and feedback cannot be empty")
+            
+        try:
+            # Generate embedding for the task
+            task_embedding = self.embedder.embed(task)
+            
+            # Save to memory
+            self.memory.add_entry(task, feedback, task_embedding)
+            logger.info(f"Saved feedback for task: '{task[:50]}...' if len(task) > 50 else task")
+        except Exception as e:
+            logger.error(f"Error saving feedback: {str(e)}", exc_info=True)
+            raise
 
     async def save_feedback_async(self, task: str, feedback: str) -> None:
         """
@@ -357,23 +590,45 @@ class SelfLearner:
                 # If multiple similar tasks found, use LLM to select the best feedback
                 selected_feedback = self._select_best_feedback(task, similar_tasks)
                 
-                # Find which task provided the selected feedback
-                selected_task = None
-                selected_index = None
-                for similar_task in similar_tasks:
-                    if similar_task["feedback"] == selected_feedback:
-                        selected_task = similar_task["task"]
-                        selected_index = similar_task["index"]
-                        # Update usage count
-                        self.memory.increment_usage([selected_index])
-                        break
+                # Handle different types of selected_feedback
+                if isinstance(selected_feedback, list):
+                    # Find which tasks provided the selected feedback
+                    selected_indices = []
+                    for feedback_item in selected_feedback:
+                        if feedback_item == "NONE":
+                            continue
+                        for similar_task in similar_tasks:
+                            if similar_task["feedback"] == feedback_item:
+                                selected_indices.append(similar_task["index"])
+                                break
+                    
+                    # Update usage count
+                    if selected_indices:
+                        self.memory.increment_usage(selected_indices)
                         
-                if self.show_feedback_selection and selected_task:
-                    logger.info(f"Selected feedback: '{selected_feedback}'")
-                    logger.info(f"From task: '{selected_task}'")
+                    if self.show_feedback_selection:
+                        logger.info(f"Selected {len(selected_feedback)} feedback items")
+                        for item in selected_feedback:
+                            logger.info(f"- '{item}'")
+                else:
+                    # Legacy single feedback selection (for backward compatibility)
+                    # Find which task provided the selected feedback
+                    selected_task = None
+                    selected_index = None
+                    for similar_task in similar_tasks:
+                        if similar_task["feedback"] == selected_feedback:
+                            selected_task = similar_task["task"]
+                            selected_index = similar_task["index"]
+                            # Update usage count
+                            self.memory.increment_usage([selected_index])
+                            break
+                            
+                    if self.show_feedback_selection and selected_task:
+                        logger.info(f"Selected feedback: '{selected_feedback}'")
+                        logger.info(f"From task: '{selected_task}'")
             
             # If no suitable feedback was selected, return the base prompt
-            if selected_feedback == "NONE":
+            if selected_feedback == "NONE" or (isinstance(selected_feedback, list) and selected_feedback[0] == "NONE"):
                 if self.show_feedback_selection:
                     logger.info("No suitable feedback was selected. Using original prompt.")
                 return base_prompt
@@ -401,144 +656,6 @@ class SelfLearner:
         """
         logger.warning("enhance_prompt is deprecated, use apply_feedback instead")
         return self.apply_feedback(task, base_prompt)
-
-    def _select_best_feedback(self, task: str, similar_tasks: List[Dict[str, Any]]) -> str:
-        """
-        Select the best feedback from similar tasks.
-        
-        If an LLM client is available, use it to choose.
-        Otherwise, use the most similar task's feedback.
-
-        Args:
-            task (str): The current task.
-            similar_tasks (List[Dict[str, Any]]): List of similar tasks with feedback.
-
-        Returns:
-            str: The selected feedback or "NONE" if none is suitable.
-        """
-        # If no LLM client available, use the most similar task's feedback
-        if not self.llm_client:
-            logger.debug("No LLM client available, using most similar task's feedback")
-            return similar_tasks[0]["feedback"]
-        
-        # Construct prompt for the LLM
-        prompt = self._construct_feedback_selection_prompt(task, similar_tasks)
-        
-        if self.show_feedback_selection:
-            logger.debug("Feedback selection prompt:")
-            logger.debug(f"'{prompt}'")
-        
-        try:
-            if self.llm_feedback_selection_layer == "openai":
-                response = self.llm_client.chat.completions.create(
-                    model="gpt-4o",  # or gpt-3.5-turbo as a fallback
-                    messages=[
-                        {"role": "system", "content": "You are helping improve a self-learning agent."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.3,
-                    max_tokens=200
-                )
-                selected_feedback = response.choices[0].message.content.strip()
-                
-                if self.show_feedback_selection:
-                    logger.debug(f"LLM response: '{selected_feedback}'")
-            else:
-                logger.warning(f"Unknown LLM provider: {self.llm_feedback_selection_layer}, using most similar task's feedback")
-                selected_feedback = similar_tasks[0]["feedback"]
-                
-            # Validate the response
-            # If the response exactly matches one of the feedbacks, use it
-            for task in similar_tasks:
-                if selected_feedback == task["feedback"]:
-                    return selected_feedback
-                
-            # If the response is "NONE", return that
-            if selected_feedback == "NONE":
-                return "NONE"
-                
-            # Otherwise, default to the most similar task's feedback
-            if self.show_feedback_selection:
-                logger.warning("LLM response didn't match any feedback exactly. Using most similar task's feedback.")
-            return similar_tasks[0]["feedback"]
-            
-        except Exception as e:
-            logger.error(f"Error selecting feedback with LLM: {str(e)}", exc_info=True)
-            logger.warning("Falling back to most similar task's feedback.")
-            # Fall back to the most similar task's feedback
-            return similar_tasks[0]["feedback"]
-
-    def _construct_feedback_selection_prompt(self, task: str, similar_tasks: List[Dict[str, Any]]) -> str:
-        """
-        Construct a prompt for the LLM to select the best feedback.
-
-        Args:
-            task (str): The current task.
-            similar_tasks (List[Dict[str, Any]]): List of similar tasks with feedback.
-
-        Returns:
-            str: The prompt for the LLM.
-        """
-        prompt = f"""You are helping improve a self-learning agent.
-
-Here is a new incoming task: {task}
-
-Here are previous feedbacks from similar tasks:
-"""
-
-        for i, similar_task in enumerate(similar_tasks):
-            prompt += f"- Feedback {i+1}: {similar_task['feedback']}\n"
-
-        prompt += """
-Choose the **most appropriate feedback** to apply to the new task. 
-Return the selected feedback text EXACTLY as it appears above.
-If none are useful, return "NONE".
-
-Selected feedback:"""
-
-        return prompt
-
-    def _inject_feedback(self, base_prompt: str, feedback: str) -> str:
-        """
-        Inject feedback into the base prompt.
-        
-        Uses custom formatter if provided, otherwise uses default format.
-
-        Args:
-            base_prompt (str): The base prompt.
-            feedback (str): The feedback to inject.
-
-        Returns:
-            str: The enhanced prompt with feedback injected.
-        """
-        if self.feedback_formatter:
-            return self.feedback_formatter(base_prompt, feedback)
-        
-        # Default formatting: append to the end of the base prompt
-        return f"{base_prompt}\n\nAdditional instructions: {feedback}"
-
-    def save_feedback(self, task: str, feedback: str) -> None:
-        """
-        Save feedback for a task.
-
-        Args:
-            task (str): The task description.
-            feedback (str): The feedback for the task.
-        """
-        if not task or not feedback:
-            logger.error("Task and feedback cannot be empty")
-            raise ValueError("Task and feedback cannot be empty")
-            
-        try:
-            # Generate embedding for the task
-            task_embedding = self.embedder.embed(task)
-            
-            # Save to memory
-            self.memory.add_entry(task, feedback, task_embedding)
-            logger.info(f"Saved feedback for task: '{task[:50]}...' if len(task) > 50 else task")
-        except Exception as e:
-            logger.error(f"Error saving feedback: {str(e)}", exc_info=True)
-            raise
 
     def show_memory(self) -> List[Dict[str, Any]]:
         """
@@ -997,4 +1114,25 @@ Selected feedback:"""
         Returns:
             bool: True if memory is empty, False otherwise.
         """
-        return self.memory.is_empty() 
+        return self.memory.is_empty()
+
+    def set_num_select_feedback(self, num_select_feedback: int) -> None:
+        """
+        Set the number of feedback items to select.
+
+        Args:
+            num_select_feedback (int): Number of feedback items to select.
+            
+        Raises:
+            ValueError: If num_select_feedback is less than 1.
+        """
+        if num_select_feedback < 1:
+            logger.error(f"num_select_feedback must be at least 1, got {num_select_feedback}")
+            raise ValueError(f"num_select_feedback must be at least 1, got {num_select_feedback}")
+            
+        if num_select_feedback > self.max_matches:
+            logger.warning(f"num_select_feedback ({num_select_feedback}) is greater than max_matches ({self.max_matches}). Setting num_select_feedback to {self.max_matches}.")
+            num_select_feedback = self.max_matches
+            
+        self.num_select_feedback = num_select_feedback
+        logger.debug(f"Set num_select_feedback to {num_select_feedback}") 
