@@ -8,7 +8,7 @@ A lightweight Python library that allows any LLM agent to self-improve through f
 
 ## 📋 Overview
 
-**Problem**: LLM agents struggle to consistently learn from user feedback without requiring costly model retraining or complex infrastructure.
+**Problem**: LLM agents struggle to consistently learn from user feedback without requiring costly model retraining or complex infrastructure...
 
 **Solution**: This library provides a simple system for capturing, storing, and reusing feedback for LLM tasks. It works by:
 
